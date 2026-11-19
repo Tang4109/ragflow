@@ -42,6 +42,7 @@ const FormId = 'DocumentPipelineDialogForm';
 interface IProps
   extends IModalProps<IChangeParserRequestBody>, IDocumentPipelineDialogProps {
   loading: boolean;
+  saveDisabled?: boolean;
 }
 
 export function DocumentPipelineDialog({
@@ -52,6 +53,7 @@ export function DocumentPipelineDialog({
   pipelineVersionId,
   parserConfig,
   loading,
+  saveDisabled = false,
 }: IProps) {
   const { t } = useTranslation();
 
@@ -68,6 +70,7 @@ export function DocumentPipelineDialog({
     showOperatorTabs,
     buildSubmitData,
     versionOutdated,
+    pipelineVersionMissing,
     parserOptionMissing,
   } = useDocumentPipelineForm({
     parserId,
@@ -78,13 +81,8 @@ export function DocumentPipelineDialog({
 
   const handleParserSelect = useParserSelectHandler(form);
 
-  // A pinned version that was deleted entirely is covered by the select's
-  // missing display plus the parserOptionMissing guard below, so no separate
-  // Missing banner lives here.
   const onSubmit = useCallback(
     async (data: Parameters<typeof buildSubmitData>[0]) => {
-      // A deleted pinned version/parser never reaches the backend; the
-      // missing message beside the select is already visible.
       if (parserOptionMissing) return;
       const ret = await onOk?.(buildSubmitData(data));
       if (ret) {
@@ -167,6 +165,7 @@ export function DocumentPipelineDialog({
           <ButtonLoading
             type="submit"
             form={FormId}
+            disabled={saveDisabled || pipelineVersionMissing}
             loading={
               loading || (operatorNodesLoading && operatorNodes.length === 0)
             }

@@ -22,12 +22,16 @@ A record of the schema and data changes the Go backend applies to a RAGFlow data
 - A version-gated step runs when the stored version is lower than the step's version. Versions are compared with Python PEP 440 semantics, where a `dev` prerelease sorts *before* the release it precedes (`v1.0.0-rc1.dev1` < `v1.0.0-rc1`). A missing or unparsable marker never skips a step.
 - `checkDatabaseVersion` in [cmd/ragflow_server.go](https://github.com/infiniflow/ragflow/blob/main/cmd/ragflow_server.go) refuses to start when the code version is older than the stored database version, so a database migrated by a newer release cannot be opened by an older one.
 
+OSS startup runs migrations automatically before starting services. The enterprise
+executable exposes `--migrate` for a separate migration step; the explicit commands
+below refer to that deployment flow.
+
 Startup order in `InitDB` for `ragflow_server --migrate` ([database.go](https://github.com/infiniflow/ragflow/blob/main/internal/dao/database.go)):
 
 1. `RunMigrations` — manual, idempotent steps plus the two versioned tenant model steps. This includes `migrateColumnWidths`, which widens `pipeline_operation_log.pipeline_title`, `tenant.name`, and the `tenant_*id` model-reference columns only when the existing column is narrower. Runs *before* `AutoMigrate` because it has to observe the legacy schema.
 2. `migrateIngestionLogRunIdentity` — ingestion log columns and indexes.
 3. `migrateUserTenantDuplicates` — deduplicates memberships before `AutoMigrate` creates their unique index.
-4. `AutoMigrate` — converges every ORM model, including the compilation queue tables.
+4. `AutoMigrate` — converges every ORM model, including the compilation queue tables and the `TEXT` column for model instance credentials.
 5. `migrateConversationHistory` — runs *after* `AutoMigrate`, which creates the child tables it backfills.
 6. `migrateIngestionParserConfigs` — converts ingestion settings on datasets and documents, then invokes the existing `migrateKnowledgebaseParserConfig` cleanup. Both run after the conversation split so the shared marker cannot skip that split.
 7. `migrateTenantModelMaxTokens` — backfills model context windows before advancing the marker to its target.
@@ -406,6 +410,7 @@ These steps are not gated by the version marker. They use schema or data checks 
 
 | Table                                                                                      | Change                                                                                                                                                                                                                                                                                                                                        |
 |--------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `tenant_model_instance` | Widens `api_key` from `varchar(512)` to `TEXT NOT NULL` through `AutoMigrate` during `ragflow_server --migrate`, so structured provider credentials can hold longer tokens. |
 | `tenant_llm`                                                                               | Composite primary key `(tenant_id, llm_factory, llm_name)` is replaced by a surrogate auto-increment `id`; the legacy uniqueness is preserved by a unique index on the old key columns.                                                                                                                                                       |
 | `task`, `document`                                                                         | `process_duation` renamed to `process_duration`.                                                                                                                                                                                                                                                                                              |
 | `user`                                                                                     | Unique index on `email`.                                                                                                                                                                                                                                                                                                                      |

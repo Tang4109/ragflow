@@ -81,6 +81,7 @@ export interface ISearchAppProps {
   avatar: any;
   create_time: number;
   created_by: string;
+  user_id?: string;
   description: string;
   id: string;
   name: string;
@@ -189,6 +190,7 @@ interface IllmSettingEnableProps {
 export interface ISearchAppDetailProps {
   avatar: any;
   created_by: string;
+  user_id?: string;
   description: string;
   id: string;
   name: string;
@@ -313,7 +315,7 @@ export const useUpdateSearch = () => {
       }
       return response.data;
     },
-    onSuccess: (data, variables) => {
+    onSuccess: (_data, variables) => {
       message.success(t('message.updated'));
       queryClient.invalidateQueries({
         queryKey: ['searchDetail', variables.search_id],

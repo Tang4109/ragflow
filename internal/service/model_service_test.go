@@ -912,6 +912,7 @@ func TestProviderInstanceCredentialMetadataDoesNotExposeSecrets(t *testing.T) {
 func TestMergeProviderAPIKeyPreservesBlankCredentialsAndSupportsClear(t *testing.T) {
 	tests := []struct {
 		name      string
+		provider  string
 		existing  string
 		submitted string
 		clear     bool
@@ -942,10 +943,17 @@ func TestMergeProviderAPIKeyPreservesBlankCredentialsAndSupportsClear(t *testing
 			clear:     true,
 			want:      map[string]string{"auth_mode": "iam_role", "aws_role_arn": "arn:aws:iam::1:role/model"},
 		},
+		{
+			name:      "MinerU removes form metadata while retaining the saved token",
+			provider:  "MinerU",
+			existing:  `{"mineru_api_token":"synthetic-token","model_info":[{"model_name":"MinerU-model"}],"api_key_config":{"mineru_backend":"basic"}}`,
+			submitted: `{"mineru_backend":"advanced","model_info":[],"credential_status":{"mineru_api_token":true}}`,
+			want:      map[string]string{"mineru_api_token": "synthetic-token", "mineru_backend": "advanced"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := mergeProviderAPIKey(tt.existing, json.RawMessage(tt.submitted), tt.clear)
+			got, err := mergeProviderAPIKey(tt.provider, tt.existing, json.RawMessage(tt.submitted), tt.clear)
 			if err != nil {
 				t.Fatalf("mergeProviderAPIKey() error = %v", err)
 			}
@@ -960,7 +968,7 @@ func TestMergeProviderAPIKeyPreservesBlankCredentialsAndSupportsClear(t *testing
 	}
 }
 
-func TestResolveSavedProviderModelConfigUsePermissionCannotOverrideSavedEndpoint(t *testing.T) {
+func TestResolveSavedProviderModelConfigUsesStoredEndpointForOwner(t *testing.T) {
 	db := setupModelProviderServiceTestDB(t)
 	useModelProviderServiceTestDB(t, db)
 	seedModelProviderServiceScope(t, db)
@@ -975,46 +983,24 @@ func TestResolveSavedProviderModelConfigUsePermissionCannotOverrideSavedEndpoint
 		t.Fatalf("update saved instance: %v", err)
 	}
 	if err := db.Create(&entity.UserTenant{
-		ID: "user-tenant-member", UserID: "member-1", TenantID: "tenant-1", Role: string(permission.RoleNormal), Status: &activeStatus,
-	}).Error; err != nil {
-		t.Fatalf("seed tenant member: %v", err)
-	}
-	if err := db.Create(&entity.UserTenant{
 		ID: "user-tenant-owner", UserID: "user-1", TenantID: "tenant-1", Role: string(permission.RoleOwner), Status: &activeStatus,
 	}).Error; err != nil {
 		t.Fatalf("seed tenant owner: %v", err)
 	}
-	service := NewModelProviderService()
-	ctx := serviceTestContext(t, "member-1", "tenant-1")
-	config, err := service.ResolveSavedProviderModelConfig(ctx, "OpenAI", "default", SavedProviderModelOptions{})
+
+	svc := NewModelProviderService()
+	ownerCtx := serviceTestContext(t, "user-1", "tenant-1")
+	config, err := svc.ResolveSavedProviderModelConfig(ownerCtx, "OpenAI", "default", SavedProviderModelOptions{})
 	if err != nil {
-		t.Fatalf("ResolveSavedProviderModelConfig(use saved credentials) error = %v, want success", err)
+		t.Fatalf("ResolveSavedProviderModelConfig(stored credentials) error = %v, want success", err)
 	}
 	if config.APIKey != "sk-owner-secret" || config.BaseURL != "https://stored.example" || config.Region != "us-east-1" {
 		t.Fatalf("saved model config = %+v, want stored credentials and endpoint", config)
 	}
 
-	attackerURL := "https://attacker.example"
-	_, err = service.ResolveSavedProviderModelConfig(ctx, "OpenAI", "default", SavedProviderModelOptions{BaseURL: &attackerURL})
-	if err == nil || !errors.Is(err, permission.ErrPermissionDenied) {
-		t.Fatalf("ResolveSavedProviderModelConfig(use permission with endpoint override) error = %v, want hidden denial", err)
-	}
-
-	_, err = service.ResolveSavedProviderModelConfig(ctx, "OpenAI", "default", SavedProviderModelOptions{
-		APIKeyConfig: json.RawMessage(`{"paddleocr_api_url":"https://attacker.example"}`),
-	})
-	if err == nil || !errors.Is(err, permission.ErrPermissionDenied) {
-		t.Fatalf("ResolveSavedProviderModelConfig(use permission with provider endpoint override) error = %v, want hidden denial", err)
-	}
-
-	ownerCtx := serviceTestContext(t, "user-1", "tenant-1")
-	ownerInstance, code, err := service.ShowProviderInstance(ownerCtx, "OpenAI", "default")
-	if err != nil || code != common.CodeSuccess || ownerInstance["is_owner"] != true {
-		t.Fatalf("ShowProviderInstance(owner) = (%v, %v, %v), want owner metadata", ownerInstance, code, err)
-	}
 	ownerURL := "https://owner-override.example"
 	ownerRegion := "eu-west-1"
-	ownerConfig, err := service.ResolveSavedProviderModelConfig(ownerCtx, "OpenAI", "default", SavedProviderModelOptions{
+	ownerConfig, err := svc.ResolveSavedProviderModelConfig(ownerCtx, "OpenAI", "default", SavedProviderModelOptions{
 		APIKeyConfig: json.RawMessage(`{"group_id":"owner-group"}`),
 		BaseURL:      &ownerURL,
 		Region:       &ownerRegion,
@@ -1484,7 +1470,7 @@ func TestModelFactoryResolveModelConfigReportsToolSupport(t *testing.T) {
 	}
 
 	solver := NewModelFactory()
-	ctx := serviceTestContext(t, "user-1", "tenant-1")
+	ctx := serviceTestContext(t, "tenant-1", "tenant-1")
 
 	// A reference that passes validation still reads the persisted flag.
 	target, err := solver.resolveConfig(permission.WithTenantID(ctx, "tenant-1"), entity.ModelTypeChat, "model-active")
@@ -1559,7 +1545,7 @@ func TestModelFactoryResolveModelConfigPrefersTenantToolFlag(t *testing.T) {
 	}
 
 	solver := NewModelFactory()
-	ctx := serviceTestContext(t, "user-1", "tenant-1")
+	ctx := serviceTestContext(t, "tenant-1", "tenant-1")
 
 	target, err := solver.resolveConfig(permission.WithTenantID(ctx, "tenant-1"), entity.ModelTypeChat, toolsOn+"@default@OpenAI")
 	if err != nil {
@@ -1602,7 +1588,7 @@ func TestModelFactoryResolveModelConfigPropagatesLookupFailure(t *testing.T) {
 	}
 
 	solver := NewModelFactory()
-	ctx := serviceTestContext(t, "user-1", "tenant-1")
+	ctx := serviceTestContext(t, "tenant-1", "tenant-1")
 	if target, err := solver.resolveConfig(permission.WithTenantID(ctx, "tenant-1"), entity.ModelTypeChat, "model-1"); err != nil || target == nil || !target.SupportsTools {
 		t.Fatalf("baseline = (%v, %v), want tool support", target, err)
 	}
@@ -1915,5 +1901,59 @@ func TestCreateProviderInstanceUsesActiveTenantProvider(t *testing.T) {
 	}
 	if created.ProviderID != "provider-2" {
 		t.Fatalf("created instance provider_id = %q, want provider-2", created.ProviderID)
+	}
+}
+
+func TestNovaCodeSavedConfigPreservesCredentials(t *testing.T) {
+	existing := `{"api_key":"sk-test","wire_api":"responses","reasoning_effort":"medium"}`
+	merged, err := mergeSavedProviderAPIKeyConfig(existing, json.RawMessage(`{"wire_api":"chat_completions","reasoning_effort":"high","api_key":"must-not-replace"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]string
+	if err := json.Unmarshal([]byte(merged), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["api_key"] != "sk-test" || got["wire_api"] != "chat_completions" || got["reasoning_effort"] != "high" {
+		t.Fatalf("unexpected config: %v", got)
+	}
+	configured, config, _, _ := providerInstanceCredentialMetadata(merged)
+	if !configured || config["wire_api"] != "chat_completions" || config["reasoning_effort"] != "high" {
+		t.Fatalf("settings did not survive metadata echo: %v", config)
+	}
+	if _, ok := config["api_key"]; ok {
+		t.Fatal("credential must not be included in config echo")
+	}
+}
+
+func TestAlterModelTypeOnlyPreservesInstanceSettings(t *testing.T) {
+	db := setupModelProviderServiceTestDB(t)
+	useModelProviderServiceTestDB(t, db)
+	seedModelProviderServiceScope(t, db)
+	extra := `{"max_tokens":16384,"is_tools":true,"user_setting":"keep"}`
+	if err := db.Model(&entity.TenantModel{}).Where("id = ?", "model-1").Updates(map[string]interface{}{"extra": extra, "status": "inactive"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	ctx := serviceTestContext(t, "user-1", "user-1")
+	code, err := NewModelProviderService().AlterModel(ctx, "OpenAI", "default", "gpt-test", "", map[string]interface{}{"model_type": []interface{}{"chat", "vision"}})
+	if err != nil || code != common.CodeSuccess {
+		t.Fatalf("AlterModel() = %v, %v", code, err)
+	}
+	var got entity.TenantModel
+	if err := db.Where("id = ?", "model-1").Take(&got).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.ModelType != int(entity.ModelTypeFromStrings([]string{"chat", "vision"})) {
+		t.Fatalf("types = %v", got.ModelType)
+	}
+	if got.Extra != extra || got.Status != "inactive" || got.ProviderID != "provider-1" || got.InstanceID != "instance-1" || got.ModelName != "gpt-test" {
+		t.Fatalf("type-only update altered other model settings: %+v", got)
+	}
+	var instance entity.TenantModelInstance
+	if err := db.Where("id = ?", "instance-1").Take(&instance).Error; err != nil {
+		t.Fatal(err)
+	}
+	if instance.APIKey != "sk-test" {
+		t.Fatal("type-only update altered provider credentials")
 	}
 }

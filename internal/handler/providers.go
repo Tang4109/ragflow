@@ -330,9 +330,12 @@ func FetchProviderModels(ctx context.Context, providerName, apiKey, baseURL, reg
 			}
 		}
 	}
-	if remoteFetched && bedrockAPIKeyAuth {
+	if remoteFetched && (bedrockAPIKeyAuth || strings.EqualFold(providerName, "NovaCode")) {
 		if len(remoteModels) == 0 {
-			return nil, common.NewCodedError(common.CodeDataError, "No Bedrock models were discovered")
+			if bedrockAPIKeyAuth {
+				return nil, common.NewCodedError(common.CodeDataError, "No Bedrock models were discovered")
+			}
+			return nil, common.NewCodedError(common.CodeDataError, "No supported NovaCode chat or vision models were discovered")
 		}
 		remoteNames := make(map[string]struct{}, len(remoteModels))
 		for _, model := range remoteModels {
@@ -1711,9 +1714,11 @@ func (h *ProviderHandler) ParseFile(c *gin.Context) {
 func (h *ProviderHandler) ListModelsForUserInTenant(c *gin.Context) {
 	modelType := c.Query("type")
 	tenantID := c.Query("tenant_id")
+	ownerIDs := getOwnerIDs(c)
+	accessUserID := c.Query("access_user_id")
 	ctx := c.Request.Context()
 
-	models, code, err := h.modelProviderService.ListModelsForUserInTenant(ctx, tenantID, modelType)
+	models, code, err := h.modelProviderService.ListModelsForUserInTenant(ctx, tenantID, ownerIDs, accessUserID, modelType)
 	if err != nil {
 		common.RespondError(c, code, err.Error())
 		return

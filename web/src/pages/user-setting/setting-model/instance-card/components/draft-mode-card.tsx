@@ -20,22 +20,19 @@ import { type RefObject } from 'react';
 import { AimlapiGetKeyButton } from '../aimlapi-get-key-button';
 import { DRAFT_INSTANCE_SENTINEL, DraftModeCardProps } from '../interface';
 import { ModelsSection } from '../models-section';
-import VerifyButton from '../verify-button';
 import { InstanceNameSection } from './instance-name-section';
 
 /**
  * The draft (unsaved) variant of the provider instance card.
  *
  * Renders the instance name input section at the top (paired with the
- * delete and Save buttons for this draft), followed by the form fields,
- * verify button, and per-instance models section. All fields are
- * editable from the start; there is no fieldset lock.
+ * delete and Save buttons for this draft), followed by the form fields
+ * and per-instance models section.
  */
 export function DraftModeCard({
   formFields,
   formDefaultValues,
   formRef,
-  handleVerify,
   handleDelete,
   handleSave,
   saving,
@@ -46,6 +43,7 @@ export function DraftModeCard({
   modelInfoRef,
   draftName,
   setDraftName,
+  draftNameError,
   verifyTransform,
 }: DraftModeCardProps) {
   return (
@@ -53,6 +51,7 @@ export function DraftModeCard({
       <InstanceNameSection
         draftName={draftName}
         setDraftName={setDraftName}
+        error={draftNameError}
         handleDelete={handleDelete}
         handleSave={handleSave}
         saving={saving}
@@ -65,20 +64,10 @@ export function DraftModeCard({
         onSubmit={() => undefined}
         defaultValues={formDefaultValues}
         labelClassName="font-normal"
-        resetOptions={{ keepDirtyValues: true }}
+        resetOptions={{ keepDirtyValues: true, keepErrors: true }}
       />
 
       {providerName === LLMFactory.AIMLAPI && <AimlapiGetKeyButton />}
-
-      {/* {providerName !== LLMFactory.OpenAiAPICompatible && (
-        <div className="pt-3">
-          <VerifyButton
-            onVerify={handleVerify}
-            isAbsolute={false}
-            formRef={formRef}
-          />
-        </div>
-      )} */}
 
       <div className="pt-3">
         <ModelsSection
